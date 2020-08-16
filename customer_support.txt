@@ -1,0 +1,109 @@
+Документация к алгоритму расчета загруженности сотрудников отдела Customer Support.
+
+Для расчета загруженности сотрудников используется два файла: 
+	1) lib_main.py - файл с функциями для вычисления загруженности сотрудников.
+	2) main.py - основной файл с функциями извлечения сырых данных из BigQuery и записи результатов в BigQuery.
+
+Описание функций файла lib_main.py:
+		1) workloadScoringByStatuses(Data,NumOfAllDays,NumOfIntervalDays) - функция для расчета загруженности по статусам. 
+			Input: Data - входные данные сотрудников Customer Support, тип pandas DataFrame
+				   NumOfAllDays - число дней, за которые считается среднее число обращений, тип integer
+				   NumOfIntervalDays - число дней в интервале, тип integer	
+			Output: тип pandas DataFrame, assignee_id - id сотрудника, 
+										  status - статус обращения,	
+										  count_last_period - число обращений за последний период по определенному статусу,
+										  count_mean_calc_period - среднее число обращений по данному статусу за период,
+										  count_sem_calc_period - стандартная ошибка для числа обращений по выбранному статусу,
+										  score_value - оценка загруженности сотрудника по выбранному статусу. 
+														0 - малая загруженность
+														1 - нормальная загруженность
+														2 - сильная загруженность
+			Алгоритм работы: Вычисляется начальная дата, от которой будем проводить расчеты: CurDate - NumOfAllDays. 
+							 Считаем число дней в периоде: NumOfAllDays/NumOfIntervalDays.
+							 Для каждой уникальной пары assignee_id и status из исходных данных, считается число обращений за периоды. 
+							 Затем вычисляем среднее число обращений за период (count_mean_calc_period) и стандартную ошибку (count_sem_calc_period). 
+							 Вычисляем левую и правую границы нормального числа	обращений для сотрудника по выбранному статусу: count_mean_calc_period +- count_sem_calc_period
+							 Передаем эти значения и число обращений за текущий период в функцию workloadScoreStatuses.			
+			[example]
+			Input: Data = id	   created	   updated	   status	assignee_id
+						  2936149  2018-12-31  2019-01-30  closed	26979706288
+						  2936171  2018-12-31  2019-01-30  closed	26979706288
+					NumOfAllDays = 63
+					NumOfIntervalDays = 7
+			Output: assignee_id	 status	 count_last_period	count_mean_calc_period	count_sem_calc_period	score_value
+					12604869947	 closed	 196	            196.62	                9.43	                1
+					12604869947	 solved	 0	                0.00	                0.00	                0 		
+		2) workloadScoringByStatusesAndChannels(Data,NumOfAllDays,NumOfIntervalDays) - функция для расчета загруженности по стутусам и каналам связи.
+			Input: Data - входные данные сотрудников Customer Support, тип pandas DataFrame
+				   NumOfAllDays - число дней, за которые считается среднее число обращений, тип integer
+				   NumOfIntervalDays - число дней в интервале, тип integer	
+			Output: тип pandas DataFrame, assignee_id - id сотрудника, 
+										  status - статус обращения,
+										  count_last_period - число обращений за последний период по определенному статусу и каналу,
+										  count_mean_calc_period - среднее число обращений по данному статусу и каналу за период,
+										  count_sem_calc_period - стандартная ошибка для числа обращений по выбранному статусу и каналу,
+										  score_value - оценка загруженности сотрудника по выбранному статусу и каналу,
+														0 - малая загруженность
+														1 - нормальная загруженность
+														2 - сильная загруженность
+										  channel - канал связи. 		
+			Алгоритм работы: аналогичен функции workloadScoringByStatuses. 
+							 Разница в том, что группировка данных происходит не по assignee_id и status, а по assignee_id, status и channel.	
+			[example]
+			Input: Data = id	   created	   updated	   status	channel	assignee_id
+						  2936149  2018-12-31  2019-01-30  closed	chat	26979706288
+						  2936171  2018-12-31  2019-01-30  closed	chat	26979706288
+					NumOfAllDays = 63
+					NumOfIntervalDays = 7
+			Output: assignee_id	 status	 count_last_period	count_mean_calc_period	count_sem_calc_period	score_value	channel
+					12604869947	 closed	 196	            196.62	                9.43	                1			chat
+					12604869947	 solved	 0	                0.00	                0.00	                0			chat	
+		3) workloadScoreStatuses(LeftBoard,RightBoard,CurrentNumOfTasks) - функция для расчета результата загруженности. Используется в функциях workloadScoringByStatuses, workloadScoringByStatusesAndChannels.
+			Input: LeftBoard - левая допустимая граница числа обращений,
+				   RightBoard - правая допустимая граница числа обращений,	
+				   CurrentNumOfTasks - текущее число обращений. 
+		    Output: тип integer, 0 или 1 или 2, где 0 - малая загруженность, 1 - нормальная загруженность, 2 - высокая загруженность.
+			Алгоритм работы: Если число обращений находится между границми, то результат 1. 
+							 Если меньше левой границы, то 0. 
+							 Если все три входные параметра равны 0, то результат 0. 
+							 Во всех осальных случаях результат 2.
+			[example]
+			Input: LeftBoard = 187
+				   RightBoard = 206
+				   CurrentNumOfTasks = 196
+			Output: 1				 
+		4) totalScoringByStatus(DataFrame) - функция для расчета итоговой загруженности для сотрудника. 
+		    Input: DataFrame - тип pandas DataFrame, результат функции workloadScoringByStatuses.
+			Output: тип pandas DataFrame.
+			Алгоритм работы: для каждого уникального assignee_id считается среднее значение score_value. 
+							 Значение score_value по статусу closed складывается со значением score_value по статусу solved и делится пополам. 
+			[example]
+			Input: assignee_id	 status	 count_last_period	count_mean_calc_period	count_sem_calc_period	score_value
+					12604869947	 closed	 196	            196.62	                9.43	                1
+					12604869947	 solved	 0	                0.00	                0.00	                0
+			Output: assignee_id	 score_value
+					12604869947	 0.5			
+Описание функций файла main.py:	
+		Импортируем все функции из файла lib_main.py 
+		1) getFreshData(Credentials,ProjectId) - функция для получения данных из BigQuery.
+			Credentials - объект google service для получения данных
+			ProjectId - в нашем случае findcsystem
+			bigquery_sql - sql запрос.
+			Output: объект pandas DataFrame, данный DataFrame используется в функции workloadScoringByStatuses.
+			Дополнительно: в запросе берем только данные где status или closed или solved.
+		2) getFreshDataWithChannel(Credentials, ProjectId) - функция для получения данных из BigQuery.
+			Аналогична функции getFreshData. Различается в sql запросе и результирующим DataFrame. Добавляется графа channel. 
+			Используется в workloadScoringByStatusesAndChannels.
+			Дополнительно: в запросе берем только данные где status или closed или solved, + channel принимает одно из значений 'chat','help_widget','email','call', 'zendesk', 'other'
+		3) insertScoreResultData, insertTotalScoreResultData, insertChannelScoreResultData - функции для записи рассчитанных значений в таблицы BigQuery. 
+			Input: InsertDataFrame - pandas DataFrame с данными по всем сотрудникам и рассчитанным результатом загруженности,
+				   ProjectId - имя проекта в Google Cloud Platform,
+				   DatasetId - имя датасета в Google Cloud Platform,,
+				   TableId - имя таблицы в Google Cloud Platform
+	Для корректного выполнения кода необходимо указать Credentials. 
+	При запуске происходит загрузка данных с помощью функций getFreshData, getFreshDataWithChannel.
+	Затем происходит расчет загруженности для всех сотрудников: 
+		workloadScoringByStatusesAndChannels - по статусам и каналам,
+		workloadScoringByStatuses - по статусам,
+		totalScoringByStatus - итоговый результат загруженности. 
+	Далее полученные результаты загружеются в базу данных BigQuery с помощью функций insertScoreResultData, insertChannelScoreResultData, insertTotalScoreResultData.	
